@@ -5,7 +5,8 @@ Tourne dans la zone de notification (icône près de l'horloge) :
 
 Raccourcis globaux :
   Ctrl+Alt+Espace  -> démarrer / arrêter l'enregistrement
-                      à l'arrêt : transcription, puis collage dans le champ actif
+                      à l'arrêt : transcription, nettoyage IA (Mistral, si une clé est
+                      configurée), puis collage dans le champ actif
   Ctrl+Alt+X       -> annuler (enregistrement ou transcription en cours)
   Ctrl+Alt+C       -> recopier la dernière transcription dans le presse-papiers
   Ctrl+Alt+Q       -> quitter
@@ -31,6 +32,10 @@ from PIL import Image, ImageDraw
 SAMPLE_RATE = 16000
 MAX_SECONDS = 300  # arrêt automatique d'un enregistrement oublié
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# Nettoyage IA partagé avec l'outil voisin text-polish (même prompt, même modèle).
+sys.path.insert(0, os.path.join(HERE, "..", "text-polish"))
+from text_polish import load_api_key, polish  # noqa: E402
 LOG_PATH = os.path.join(HERE, "whisper_talk.log")
 
 log = logging.getLogger("whisper_talk")
@@ -66,11 +71,13 @@ def single_instance():
 
 
 class WhisperTalk:
-    def __init__(self, model_name, language, paste, keep_clipboard):
+    def __init__(self, model_name, language, paste, keep_clipboard, api_key):
         self.model_name = model_name
         self.language = language
         self.paste = paste
         self.keep_clipboard = keep_clipboard
+        self.api_key = api_key  # None : pas de nettoyage IA
+        self.polish_enabled = api_key is not None
         self.model = None
 
         self.state = LOADING
@@ -229,11 +236,25 @@ class WhisperTalk:
                 parts.append(s.text.strip())
             text = " ".join(parts).strip()
             log.info("Transcrit %.1fs d'audio en %.1fs : %r", duration, time.time() - t0, text)
+            if text and self.polish_enabled and not self.cancel_event.is_set():
+                text = self._polish(text)
             if text and not self.cancel_event.is_set():
                 self.last_text = text
                 self._output(text)
         finally:
             self.set_state(IDLE)
+
+    def _polish(self, text):
+        """Nettoyage IA ; en cas d'échec, on colle la transcription brute plutôt que rien."""
+        try:
+            t0 = time.time()
+            cleaned = polish(text, self.api_key)
+            log.info("Nettoyé en %.1fs : %r", time.time() - t0, cleaned)
+            return cleaned
+        except Exception as e:
+            log.exception("Échec du nettoyage IA")
+            self.notify(f"Nettoyage IA impossible, texte brut collé : {e}")
+            return text
 
     # --- sortie ------------------------------------------------------------
     def _output(self, text):
@@ -251,6 +272,10 @@ class WhisperTalk:
             time.sleep(0.3)  # laisser l'application lire le presse-papiers
             pyperclip.copy(previous)
 
+    def _toggle_polish(self):
+        self.polish_enabled = not self.polish_enabled
+        log.info("Nettoyage IA : %s", "activé" if self.polish_enabled else "désactivé")
+
     # --- cycle de vie ------------------------------------------------------
     def run(self):
         def label_toggle(_):
@@ -264,6 +289,9 @@ class WhisperTalk:
                              enabled=lambda _: self.state in (RECORDING, TRANSCRIBING)),
             pystray.MenuItem("Copier la dernière transcription\tCtrl+Alt+C", lambda: self.post("copy"),
                              enabled=lambda _: bool(self.last_text)),
+            pystray.MenuItem("Nettoyage IA (Mistral)", self._toggle_polish,
+                             checked=lambda _: self.polish_enabled,
+                             enabled=lambda _: self.api_key is not None),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Ouvrir le journal", lambda: os.startfile(LOG_PATH)),
             pystray.MenuItem("Quitter\tCtrl+Alt+Q", lambda: self.icon.stop()),
@@ -305,6 +333,8 @@ def main():
                    help="ne pas coller automatiquement, seulement copier")
     p.add_argument("--keep-clipboard", action="store_true",
                    help="laisser la transcription dans le presse-papiers après collage")
+    p.add_argument("--key-file", help="fichier contenant la clé API Mistral (nettoyage IA)")
+    p.add_argument("--no-polish", action="store_true", help="désactiver le nettoyage IA")
     args = p.parse_args()
 
     handlers = [logging.FileHandler(LOG_PATH, encoding="utf-8")]
@@ -319,9 +349,16 @@ def main():
                                          "Whisper Talk", 0x40)
         return
 
+    api_key = None
+    if not args.no_polish:
+        try:
+            api_key = load_api_key(args.key_file)
+        except Exception as e:
+            log.warning("Nettoyage IA désactivé : %s", e)
+
     try:
         WhisperTalk(args.model, None if args.language == "auto" else args.language,
-                    paste=not args.no_paste, keep_clipboard=args.keep_clipboard).run()
+                    paste=not args.no_paste, keep_clipboard=args.keep_clipboard, api_key=api_key).run()
     except Exception:
         log.exception("Erreur fatale")
         raise

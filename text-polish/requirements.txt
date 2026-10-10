@@ -1,5 +1,4 @@
 requests
-keyboard
 pyperclip
 pystray
 pillow
