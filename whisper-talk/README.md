@@ -5,7 +5,9 @@ via [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
 Un raccourci clavier lance l'enregistrement, un second l'arrête : le texte transcrit est
 collé directement dans le champ actif (chat d'un agent, éditeur, navigateur…).
 
-Aucune donnée ne quitte la machine (seul le modèle est téléchargé au premier lancement).
+La transcription est 100 % locale. En option, chaque dictée est nettoyée par
+[Text Polish](../text-polish) (API Mistral) avant d'être collée : hésitations, répétitions,
+faux départs, ponctuation. Sans clé API, le texte brut est collé et rien ne quitte la machine.
 
 ## Installation
 
@@ -22,7 +24,8 @@ powershell -ExecutionPolicy Bypass -File install_shortcuts.ps1
 ```
 
 Options du script : `-Startup` ajoute aussi un lancement automatique à l'ouverture de
-session, `-Remove` supprime les raccourcis.
+session, `-Remove` supprime les raccourcis, `-KeyFile C:\chemin\mistral-api-key.txt` active
+le nettoyage IA (dépendances de `../text-polish/requirements.txt` requises).
 
 ## Utilisation
 
@@ -45,7 +48,9 @@ zone de notification (près de l'horloge) ; sa couleur indique l'état :
 | `Ctrl+Alt+C` | Recopier la dernière transcription dans le presse-papiers |
 | `Ctrl+Alt+Q` | Quitter |
 
-Le clic droit sur l'icône donne les mêmes actions, plus l'ouverture du journal.
+Le clic droit sur l'icône donne les mêmes actions, plus l'ouverture du journal et la case
+**Nettoyage IA (Mistral)** pour activer ou désactiver le nettoyage à la volée. Si le nettoyage
+échoue (pas de connexion, limite atteinte), la transcription brute est collée.
 Un double-clic sur l'icône démarre / arrête l'enregistrement.
 
 Le texte est inséré par copier-coller (`Ctrl+V`) dans le champ qui a le focus clavier ;
@@ -62,6 +67,8 @@ raccourci :
 | `--language CODE` | Langue (`fr` par défaut), ou `auto` pour la détection |
 | `--no-paste` | Copier seulement, sans coller |
 | `--keep-clipboard` | Laisser la transcription dans le presse-papiers après collage |
+| `--key-file FICHIER` | Clé API Mistral pour le nettoyage IA (ou variable `MISTRAL_API_KEY`) |
+| `--no-polish` | Désactiver le nettoyage IA |
 
 Sur CPU, `small` est un bon compromis (≈ 4 s pour une phrase sur un i7 de 11ᵉ génération).
 Les modèles plus gros sont plus précis mais nettement plus lents.
